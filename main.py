@@ -30,16 +30,16 @@ def main():
         # Ejecutar análisis de transacciones
         print("\n🛒 PASO 3/4: Analizando transacciones...")
         pipeline.run_transactions_analysis(sample_size=None)
-        
+
         # Ejecutar análisis de transacciones explodidas
         print("\n🎯 PASO 4/4: Analizando transacciones detalladas por producto...")
         pipeline.run_transactions_exploded_analysis(sample_size=None)
 
-        # Finalizar y guardar resultados
-        pipeline.finalize(save_results=True)
+        # Finalizar
+        pipeline.finalize()
 
         print("\n🎉 ANÁLISIS COMPLETADO CON ÉXITO")
-        print("\n📁 Los resultados se han guardado en la carpeta 'outputs/'\n")
+        print("\n📊 Las gráficas se han guardado en: output/plots/\n")
 
         return 0
 
