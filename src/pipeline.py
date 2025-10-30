@@ -42,7 +42,6 @@ class SalesAnalyticsPipeline:
         print(f"{'='*80}\n")
 
         self.start_time = datetime.now()
-        print(f"⏰ Hora de inicio: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         print("🔧 Inicializando sesión de Spark...")
         self.spark = create_spark_session(self.app_name)
