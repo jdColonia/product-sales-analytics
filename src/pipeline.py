@@ -16,6 +16,17 @@ from src.data_loader import DataLoader
 from src.eda_analyzer import EDAAnalyzer
 from src.visualizer import DataVisualizer
 from datetime import datetime
+from pyspark.sql.functions import (
+    col,
+    count,
+    countDistinct,
+    desc,
+    regexp_replace,
+    size,
+    split,
+    trim,
+    when,
+)
 
 
 class SalesAnalyticsPipeline:
@@ -111,8 +122,6 @@ class SalesAnalyticsPipeline:
             self.data_loader.load_categories(), "category_id", "left"
         )
 
-        from pyspark.sql.functions import count, desc
-
         products_per_category = (
             df_with_categories.groupBy("category_name")
             .agg(count("*").alias("num_productos"))
@@ -182,11 +191,13 @@ class SalesAnalyticsPipeline:
 
         # Análisis de frecuencia de clientes (top clientes por número de transacciones)
         print("\n🏆 Top 10 clientes con más transacciones:")
-        from pyspark.sql.functions import count, desc
-
-        df_transactions.groupBy("customer_id").agg(
+        customer_activity = df_transactions.groupBy("customer_id").agg(
             count("*").alias("num_transacciones")
-        ).orderBy(desc("num_transacciones")).show(10, truncate=False)
+        )
+        customer_activity = customer_activity.cache()
+        customer_activity.orderBy(desc("num_transacciones")).show(
+            10, truncate=False
+        )
 
         self.eda_analyzer.analyze_categorical_columns(
             df_transactions,
@@ -194,6 +205,49 @@ class SalesAnalyticsPipeline:
             categorical_columns=["transaction_date"],
             top_n=15,
         )
+
+        print("\n📈 Análisis de outliers en métricas derivadas de transacciones:")
+
+        normalized_products = regexp_replace(trim(col("products")), r"\\s+", " ")
+        productos_por_transaccion_col = "productos_por_transaccion"
+
+        basket_metric_df = (
+            df_transactions.withColumn(
+                productos_por_transaccion_col,
+                when(
+                    normalized_products.isNull() | (normalized_products == ""),
+                    0,
+                ).otherwise(size(split(normalized_products, " "))),
+            )
+            .select(
+                "transaction_date",
+                "store_id",
+                "customer_id",
+                productos_por_transaccion_col,
+            )
+        )
+
+        basket_metric_df = basket_metric_df.cache()
+        self.eda_analyzer.analyze_outliers(
+            basket_metric_df,
+            "transactions",
+            column=productos_por_transaccion_col,
+            metric_name="Productos por transacción",
+            context_columns=["transaction_date", "store_id", "customer_id"],
+            top_n=10,
+        )
+        basket_metric_df.unpersist()
+
+        self.eda_analyzer.analyze_outliers(
+            customer_activity,
+            "transactions",
+            column="num_transacciones",
+            metric_name="Transacciones por cliente",
+            context_columns=["customer_id"],
+            top_n=10,
+        )
+
+        customer_activity.unpersist()
 
         # Generar visualizaciones
         print("\n📊 Generando visualizaciones...")
@@ -256,11 +310,41 @@ class SalesAnalyticsPipeline:
 
         # Top productos más vendidos
         print("\n🏆 Top 15 productos más vendidos:")
-        from pyspark.sql.functions import count, desc
-
-        df_exploded.groupBy("product_id").agg(
+        product_sales = df_exploded.groupBy("product_id").agg(
             count("*").alias("veces_vendido")
-        ).orderBy(desc("veces_vendido")).show(15, truncate=False)
+        )
+        product_sales = product_sales.cache()
+        product_sales.orderBy(desc("veces_vendido")).show(15, truncate=False)
+
+        print(
+            "\n📈 Análisis de outliers en métricas derivadas del detalle de productos:"
+        )
+
+        self.eda_analyzer.analyze_outliers(
+            product_sales,
+            "transactions_exploded",
+            column="veces_vendido",
+            metric_name="Ventas por producto",
+            context_columns=["product_id"],
+            top_n=10,
+        )
+
+        customer_products = df_exploded.groupBy("customer_id").agg(
+            count("*").alias("productos_comprados")
+        )
+        customer_products = customer_products.cache()
+        self.eda_analyzer.analyze_outliers(
+            customer_products,
+            "transactions_exploded",
+            column="productos_comprados",
+            metric_name="Productos totales por cliente",
+            context_columns=["customer_id"],
+            top_n=10,
+        )
+        customer_products.unpersist()
+
+        
+        product_sales.unpersist()
 
         self.eda_analyzer.analyze_categorical_columns(
             df_exploded,

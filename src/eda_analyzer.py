@@ -20,7 +20,8 @@ from pyspark.sql.functions import (
     desc,
     asc,
 )
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+import builtins
 import json
 
 
@@ -319,6 +320,181 @@ class EDAAnalyzer:
         }
 
         self.results[f"{dataset_name}_numeric"] = result
+        return result
+
+    def analyze_outliers(
+        self,
+        df: DataFrame,
+        dataset_name: str,
+        column: str,
+        metric_name: Optional[str] = None,
+        context_columns: Optional[List[str]] = None,
+        top_n: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Detecta y muestra outliers utilizando el método del rango intercuartílico (IQR).
+
+        Args:
+            df: DataFrame de Spark con la métrica a analizar.
+            dataset_name: Nombre del dataset base.
+            column: Columna numérica sobre la que se detectarán outliers.
+            metric_name: Nombre descriptivo de la métrica (opcional).
+            context_columns: Columnas adicionales a mostrar en los ejemplos.
+            top_n: Número de ejemplos de outliers a mostrar por cada extremo.
+
+        Returns:
+            Diccionario con la información del análisis de outliers.
+        """
+
+        metric_label = metric_name or column
+        selected_columns = list(context_columns) if context_columns else []
+        if column not in selected_columns:
+            selected_columns.append(column)
+
+        df_to_analyze = df.select(*selected_columns).filter(col(column).isNotNull())
+
+        print(f"\n{'='*80}")
+        print(f"ANÁLISIS DE OUTLIERS: {dataset_name} -> {metric_label}")
+        print(f"{'='*80}\n")
+
+        total_rows = df_to_analyze.count()
+
+        if total_rows == 0:
+            print("ADVERTENCIA: No hay datos válidos para analizar outliers")
+            result = {
+                "dataset_name": dataset_name,
+                "metric_name": metric_label,
+                "column": column,
+                "total_rows": 0,
+                "outliers_count": 0,
+                "outliers_percentage": 0.0,
+            }
+            self.results[f"{dataset_name}_outliers_{column}"] = result
+            return result
+
+        stats = df_to_analyze.select(
+            count(col(column)).alias("count"),
+            mean(col(column)).alias("mean"),
+            stddev(col(column)).alias("stddev"),
+            min(col(column)).alias("min"),
+            percentile_approx(col(column), 0.25).alias("q25"),
+            percentile_approx(col(column), 0.50).alias("median"),
+            percentile_approx(col(column), 0.75).alias("q75"),
+            max(col(column)).alias("max"),
+        ).collect()[0]
+
+        q25 = stats["q25"]
+        q75 = stats["q75"]
+
+        if q25 is None or q75 is None:
+            print("ADVERTENCIA: No fue posible calcular el IQR por falta de datos")
+            result = {
+                "dataset_name": dataset_name,
+                "metric_name": metric_label,
+                "column": column,
+                "total_rows": total_rows,
+                "outliers_count": 0,
+                "outliers_percentage": 0.0,
+            }
+            self.results[f"{dataset_name}_outliers_{column}"] = result
+            return result
+
+        iqr = q75 - q25
+
+        if iqr == 0:
+            print("Nota: IQR = 0, no se detectaron outliers con este método")
+            result = {
+                "dataset_name": dataset_name,
+                "metric_name": metric_label,
+                "column": column,
+                "total_rows": total_rows,
+                "iqr": float(iqr),
+                "lower_bound": float(q25),
+                "upper_bound": float(q75),
+                "outliers_count": 0,
+                "outliers_percentage": 0.0,
+            }
+            self.results[f"{dataset_name}_outliers_{column}"] = result
+            return result
+
+        lower_bound = q25 - 1.5 * iqr
+        upper_bound = q75 + 1.5 * iqr
+
+        outliers_df = df_to_analyze.filter(
+            (col(column) < lower_bound) | (col(column) > upper_bound)
+        )
+
+        outliers_count = outliers_df.count()
+        outliers_percentage = (outliers_count / total_rows * 100) if total_rows > 0 else 0
+
+        print(f"Métrica analizada: {metric_label}")
+        print(f"   Total de registros evaluados: {total_rows:,}")
+        print(
+            f"   Media:                  {stats['mean']:.2f}"
+            if stats["mean"] is not None
+            else "   Media:                  N/A"
+        )
+        print(
+            f"   Desviación estándar:    {stats['stddev']:.2f}"
+            if stats["stddev"] is not None
+            else "   Desviación estándar:    N/A"
+        )
+        print(f"   Mínimo:                 {stats['min']}")
+        print(f"   Q1 (25%):               {q25}")
+        print(f"   Mediana (50%):          {stats['median']}")
+        print(f"   Q3 (75%):               {q75}")
+        print(f"   Máximo:                 {stats['max']}")
+        print(f"   IQR:                    {iqr:.2f}")
+        print(f"   Límite inferior:        {lower_bound:.2f}")
+        print(f"   Límite superior:        {upper_bound:.2f}")
+        print(
+            f"   Outliers detectados:    {outliers_count:,} ({outliers_percentage:.2f}%)"
+        )
+
+        lower_outliers_df = outliers_df.filter(col(column) < lower_bound)
+        lower_outliers_count = lower_outliers_df.count()
+        upper_outliers_count = outliers_count - lower_outliers_count
+
+        if upper_outliers_count > 0:
+            print(
+                f"\n📈 Principales {builtins.min(top_n, upper_outliers_count)} outliers altos (>{upper_bound:.2f}):"
+            )
+            upper_outliers_df = outliers_df.filter(col(column) > upper_bound)
+            upper_outliers_df.orderBy(col(column).desc()).show(
+                top_n, truncate=False
+            )
+
+        if lower_outliers_count > 0:
+            print(
+                f"\n📉 Principales {builtins.min(top_n, lower_outliers_count)} outliers bajos (<{lower_bound:.2f}):"
+            )
+            lower_outliers_df.orderBy(col(column).asc()).show(top_n, truncate=False)
+
+        if outliers_count == 0:
+            print("\nNo se detectaron outliers con el criterio IQR para esta métrica.")
+
+        result = {
+            "dataset_name": dataset_name,
+            "metric_name": metric_label,
+            "column": column,
+            "total_rows": int(total_rows),
+            "mean": float(stats["mean"]) if stats["mean"] is not None else None,
+            "stddev": float(stats["stddev"]) if stats["stddev"] is not None else None,
+            "min": float(stats["min"]) if stats["min"] is not None else None,
+            "q25": float(q25),
+            "median": float(stats["median"]) if stats["median"] is not None else None,
+            "q75": float(q75),
+            "max": float(stats["max"]) if stats["max"] is not None else None,
+            "iqr": float(iqr),
+            "lower_bound": float(lower_bound),
+            "upper_bound": float(upper_bound),
+            "outliers_count": int(outliers_count),
+            "outliers_percentage": round(outliers_percentage, 2),
+            "upper_outliers_count": int(upper_outliers_count),
+            "lower_outliers_count": int(lower_outliers_count),
+        }
+
+        self.results[f"{dataset_name}_outliers_{column}"] = result
         return result
 
     def analyze_categorical_columns(
