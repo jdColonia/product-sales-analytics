@@ -237,7 +237,7 @@ class DataVisualizer:
         print(f"   Gráfica guardada: {filepath}")
 
     def plot_temporal_trend(
-        self, df: DataFrame, date_column: str, dataset_name: str, sample_dates: int = 30
+        self, df: DataFrame, date_column: str, dataset_name: str, sample_dates: int = None
     ):
         """
         Genera gráfico de línea para tendencia temporal.
@@ -246,37 +246,52 @@ class DataVisualizer:
             df: DataFrame de Spark
             date_column: Columna de fecha
             dataset_name: Nombre del dataset
-            sample_dates: Número de fechas a mostrar (para evitar sobrecarga)
+            sample_dates: Número de fechas a mostrar
         """
         # Calcular transacciones por fecha
-        temporal_data = (
+        temporal_query = (
             df.groupBy(date_column)
             .agg(count("*").alias("count"))
             .orderBy(date_column)
-            .limit(sample_dates)
-            .toPandas()
         )
+        
+        if sample_dates:
+            temporal_query = temporal_query.limit(sample_dates)
+            
+        temporal_data = temporal_query.toPandas()
 
         if temporal_data.empty:
             print("ADVERTENCIA: No hay datos temporales para graficar")
             return
 
+        # Convertir columna de fecha a datetime para mejor manejo
+        import pandas as pd
+        temporal_data[date_column] = pd.to_datetime(temporal_data[date_column])
+
         # Crear gráfico
-        plt.figure(figsize=(14, 6))
+        plt.figure(figsize=(16, 6))
         plt.plot(
             temporal_data[date_column],
             temporal_data["count"],
             marker="o",
             linewidth=2,
-            markersize=4,
+            markersize=3,
             color="darkblue",
+            alpha=0.7
         )
 
-        plt.xlabel("Fecha")
-        plt.ylabel("Número de Transacciones")
-        plt.title(f"Tendencia Temporal - {dataset_name.replace('_', ' ').title()}")
-        plt.xticks(rotation=45, ha="right")
-        plt.grid(True, alpha=0.3)
+        plt.xlabel("Fecha", fontsize=11)
+        plt.ylabel("Número de Transacciones", fontsize=11)
+        plt.title(f"Tendencia Temporal - {dataset_name.replace('_', ' ').title()}", fontsize=13, fontweight='bold')
+        
+        # Configurar el eje X para mostrar días 1, 15 y 30 de cada mes (quincenas de pago)
+        import matplotlib.dates as mdates
+        ax = plt.gca()
+        ax.xaxis.set_major_locator(mdates.DayLocator(bymonthday=[1, 15, 30]))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        
+        plt.xticks(rotation=45, ha="right", fontsize=9)
+        plt.grid(True, alpha=0.3, linestyle='--')
         plt.tight_layout()
 
         # Guardar

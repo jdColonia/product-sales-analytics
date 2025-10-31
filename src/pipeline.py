@@ -168,7 +168,17 @@ class SalesAnalyticsPipeline:
         self.eda_analyzer.analyze_missing_values(df_transactions, "transactions")
         self.eda_analyzer.analyze_duplicates(df_transactions, "transactions")
 
-        # Los IDs (store_id, customer_id) no requieren estadísticas como media o desviación
+        # Analizar cantidad de productos por transacción
+        from pyspark.sql.functions import size, split, trim, col
+        print("\n📊 Análisis de productos por transacción:")
+        print("-" * 60)
+        df_with_count = df_transactions.withColumn(
+            "num_productos", size(split(trim(col("products")), " "))
+        )
+        self.eda_analyzer.analyze_numeric_columns(
+            df_with_count, "transactions", numeric_columns=["num_productos"]
+        )
+
         # Analizamos cardinalidad y patrones de uso
         print("\n🔢 Análisis de cardinalidad de IDs:")
         print("-" * 60)
@@ -206,7 +216,7 @@ class SalesAnalyticsPipeline:
             ylabel="Customer ID",
         )
         self.visualizer.plot_temporal_trend(
-            df_transactions, "transaction_date", "transactions", sample_dates=50
+            df_transactions, "transaction_date", "transactions", sample_dates=None
         )
 
         df_transactions.unpersist()
@@ -280,7 +290,7 @@ class SalesAnalyticsPipeline:
             ylabel="Product ID",
         )
         self.visualizer.plot_temporal_trend(
-            df_exploded, "transaction_date", "transactions_exploded", sample_dates=50
+            df_exploded, "transaction_date", "transactions_exploded", sample_dates=None
         )
 
         df_exploded.unpersist()
