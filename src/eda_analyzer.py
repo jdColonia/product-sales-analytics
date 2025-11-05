@@ -175,14 +175,12 @@ class EDAAnalyzer:
             print(f"\n📋 Ejemplos de registros duplicados:")
             print("-" * 60)
 
-            from pyspark.sql.functions import count as spark_count
-
             # Encontrar registros que aparecen más de una vez
             if subset:
                 # Duplicados basados en columnas específicas
                 duplicate_examples = (
                     df.groupBy(subset)
-                    .agg(spark_count("*").alias("veces_repetido"))
+                    .agg(count("*").alias("veces_repetido"))
                     .filter(col("veces_repetido") > 1)
                     .orderBy(desc("veces_repetido"))
                 )
@@ -190,7 +188,7 @@ class EDAAnalyzer:
                 # Duplicados exactos (todas las columnas)
                 duplicate_examples = (
                     df.groupBy(*df.columns)
-                    .agg(spark_count("*").alias("veces_repetido"))
+                    .agg(count("*").alias("veces_repetido"))
                     .filter(col("veces_repetido") > 1)
                     .orderBy(desc("veces_repetido"))
                 )

@@ -6,9 +6,11 @@ y distribuciones, facilitando la interpretación de resultados.
 """
 
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import col, count, desc
+from pyspark.sql.functions import col, count, desc, concat_ws
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import seaborn as sns
+import pandas as pd
 import os
 from typing import Optional
 
@@ -196,8 +198,6 @@ class DataVisualizer:
             top_categories = dist_data.head(top_n)
             others_sum = dist_data.iloc[top_n:]["count"].sum()
             others_row = {"category_name": "Otros", "count": others_sum}
-            import pandas as pd
-
             dist_data = pd.concat(
                 [top_categories, pd.DataFrame([others_row])], ignore_index=True
             )
@@ -237,7 +237,11 @@ class DataVisualizer:
         print(f"   Gráfica guardada: {filepath}")
 
     def plot_temporal_trend(
-        self, df: DataFrame, date_column: str, dataset_name: str, sample_dates: int = None
+        self,
+        df: DataFrame,
+        date_column: str,
+        dataset_name: str,
+        sample_dates: int = None,
     ):
         """
         Genera gráfico de línea para tendencia temporal.
@@ -250,14 +254,12 @@ class DataVisualizer:
         """
         # Calcular transacciones por fecha
         temporal_query = (
-            df.groupBy(date_column)
-            .agg(count("*").alias("count"))
-            .orderBy(date_column)
+            df.groupBy(date_column).agg(count("*").alias("count")).orderBy(date_column)
         )
-        
+
         if sample_dates:
             temporal_query = temporal_query.limit(sample_dates)
-            
+
         temporal_data = temporal_query.toPandas()
 
         if temporal_data.empty:
@@ -265,7 +267,6 @@ class DataVisualizer:
             return
 
         # Convertir columna de fecha a datetime para mejor manejo
-        import pandas as pd
         temporal_data[date_column] = pd.to_datetime(temporal_data[date_column])
 
         # Crear gráfico
@@ -277,25 +278,355 @@ class DataVisualizer:
             linewidth=2,
             markersize=3,
             color="darkblue",
-            alpha=0.7
+            alpha=0.7,
         )
 
         plt.xlabel("Fecha", fontsize=11)
         plt.ylabel("Número de Transacciones", fontsize=11)
-        plt.title(f"Tendencia Temporal - {dataset_name.replace('_', ' ').title()}", fontsize=13, fontweight='bold')
-        
+        plt.title(
+            f"Tendencia Temporal - {dataset_name.replace('_', ' ').title()}",
+            fontsize=13,
+            fontweight="bold",
+        )
+
         # Configurar el eje X para mostrar días 1, 15 y 30 de cada mes (quincenas de pago)
-        import matplotlib.dates as mdates
         ax = plt.gca()
         ax.xaxis.set_major_locator(mdates.DayLocator(bymonthday=[1, 15, 30]))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+
         plt.xticks(rotation=45, ha="right", fontsize=9)
-        plt.grid(True, alpha=0.3, linestyle='--')
+        plt.grid(True, alpha=0.3, linestyle="--")
         plt.tight_layout()
 
         # Guardar
         filename = f"{dataset_name}_temporal_trend.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_weekly_sales(self, df: DataFrame, dataset_name: str = "weekly_sales"):
+        """
+        Genera gráfico de ventas semanales.
+
+        Args:
+            df: DataFrame con datos semanales (debe tener columnas: year, week, num_transacciones)
+            dataset_name: Nombre del dataset
+        """
+        df_pandas = df.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay datos semanales para graficar")
+            return
+
+        # Crear etiqueta de semana
+        df_pandas["week_label"] = (
+            df_pandas["year"].astype(str)
+            + "-W"
+            + df_pandas["week"].astype(str).str.zfill(2)
+        )
+
+        plt.figure(figsize=(16, 6))
+        plt.plot(
+            range(len(df_pandas)),
+            df_pandas["num_transacciones"],
+            marker="o",
+            linewidth=2,
+            markersize=4,
+            color="darkgreen",
+        )
+
+        plt.xlabel("Semana", fontsize=11)
+        plt.ylabel("Número de Transacciones", fontsize=11)
+        plt.title("Ventas Semanales", fontsize=13, fontweight="bold")
+
+        # Mostrar cada 4 semanas en el eje X
+        step = max(1, len(df_pandas) // 10)
+        plt.xticks(
+            range(0, len(df_pandas), step),
+            df_pandas["week_label"].iloc[::step],
+            rotation=45,
+            ha="right",
+            fontsize=9,
+        )
+
+        plt.grid(True, alpha=0.3, linestyle="--")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_monthly_sales(self, df: DataFrame, dataset_name: str = "monthly_sales"):
+        """
+        Genera gráfico de ventas mensuales.
+
+        Args:
+            df: DataFrame con datos mensuales
+            dataset_name: Nombre del dataset
+        """
+        df_pandas = df.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay datos mensuales para graficar")
+            return
+
+        # Crear etiqueta de mes
+        df_pandas["month_label"] = (
+            df_pandas["year"].astype(str)
+            + "-"
+            + df_pandas["month"].astype(str).str.zfill(2)
+        )
+
+        plt.figure(figsize=(14, 6))
+
+        # Gráfico de barras
+        bars = plt.bar(
+            range(len(df_pandas)),
+            df_pandas["num_transacciones"],
+            color="steelblue",
+            alpha=0.7,
+        )
+
+        # Agregar línea de tendencia
+        plt.plot(
+            range(len(df_pandas)),
+            df_pandas["num_transacciones"],
+            color="darkred",
+            linewidth=2,
+            marker="o",
+            markersize=6,
+            label="Tendencia",
+        )
+
+        plt.xlabel("Mes", fontsize=11)
+        plt.ylabel("Número de Transacciones", fontsize=11)
+        plt.title("Ventas Mensuales", fontsize=13, fontweight="bold")
+        plt.xticks(
+            range(len(df_pandas)),
+            df_pandas["month_label"],
+            rotation=45,
+            ha="right",
+            fontsize=9,
+        )
+        plt.legend()
+        plt.grid(True, alpha=0.3, linestyle="--", axis="y")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_day_of_week(self, df: DataFrame, dataset_name: str = "day_of_week"):
+        """
+        Genera gráfico de ventas por día de la semana.
+
+        Args:
+            df: DataFrame con datos por día de semana
+            dataset_name: Nombre del dataset
+        """
+        df_pandas = df.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay datos por día de semana para graficar")
+            return
+
+        plt.figure(figsize=(12, 6))
+
+        bars = plt.bar(
+            df_pandas["day_name"],
+            df_pandas["num_transacciones"],
+            color=[
+                "#FF6B6B",
+                "#4ECDC4",
+                "#45B7D1",
+                "#FFA07A",
+                "#98D8C8",
+                "#F7DC6F",
+                "#BB8FCE",
+            ],
+            alpha=0.8,
+        )
+
+        plt.xlabel("Día de la Semana", fontsize=11)
+        plt.ylabel("Número de Transacciones", fontsize=11)
+        plt.title(
+            "Distribución de Ventas por Día de la Semana",
+            fontsize=13,
+            fontweight="bold",
+        )
+        plt.xticks(rotation=45, ha="right")
+        plt.grid(True, alpha=0.3, linestyle="--", axis="y")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_customer_frequency_distribution(
+        self, df: DataFrame, dataset_name: str = "customer_frequency"
+    ):
+        """
+        Genera gráfico de distribución de frecuencia de compra.
+
+        Args:
+            df: DataFrame con frecuencias por cliente
+            dataset_name: Nombre del dataset
+        """
+        # Agrupar por número de compras
+        df_dist = (
+            df.groupBy("num_compras")
+            .agg(count("*").alias("num_clientes"))
+            .orderBy("num_compras")
+            .limit(20)  # Limitar a primeras 20 frecuencias
+        )
+
+        df_pandas = df_dist.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay datos de frecuencia para graficar")
+            return
+
+        plt.figure(figsize=(14, 6))
+
+        plt.bar(
+            df_pandas["num_compras"].astype(str),
+            df_pandas["num_clientes"],
+            color="purple",
+            alpha=0.7,
+        )
+
+        plt.xlabel("Número de Compras", fontsize=11)
+        plt.ylabel("Número de Clientes", fontsize=11)
+        plt.title(
+            "Distribución de Frecuencia de Compra", fontsize=13, fontweight="bold"
+        )
+        plt.xticks(rotation=45, ha="right")
+        plt.grid(True, alpha=0.3, linestyle="--", axis="y")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_rfm_segments(self, df: DataFrame, dataset_name: str = "rfm_segments"):
+        """
+        Genera gráfico de distribución de segmentos RFM.
+
+        Args:
+            df: DataFrame con segmentación RFM
+            dataset_name: Nombre del dataset
+        """
+        df_segments = (
+            df.groupBy("RFM_segment")
+            .agg(count("*").alias("num_clientes"))
+            .orderBy(col("num_clientes").desc())
+        )
+
+        df_pandas = df_segments.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay datos de segmentos RFM para graficar")
+            return
+
+        plt.figure(figsize=(12, 8))
+
+        # Gráfico de barras horizontales
+        colors = plt.cm.Set3(range(len(df_pandas)))
+        plt.barh(
+            df_pandas["RFM_segment"], df_pandas["num_clientes"], color=colors, alpha=0.8
+        )
+
+        plt.xlabel("Número de Clientes", fontsize=11)
+        plt.ylabel("Segmento RFM", fontsize=11)
+        plt.title("Distribución de Segmentos RFM", fontsize=13, fontweight="bold")
+        plt.grid(True, alpha=0.3, linestyle="--", axis="x")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
+        filepath = os.path.join(self.output_path, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"   Gráfica guardada: {filepath}")
+
+    def plot_association_rules(
+        self, df: DataFrame, dataset_name: str = "association_rules", top_n: int = 15
+    ):
+        """
+        Genera gráfico de reglas de asociación.
+
+        Args:
+            df: DataFrame con reglas de asociación
+            dataset_name: Nombre del dataset
+            top_n: Número de reglas top a graficar
+        """
+        # Convertir arrays a strings para mejor visualización
+        df_viz = (
+            df.withColumn("antecedent_str", concat_ws(", ", col("antecedent")))
+            .withColumn("consequent_str", concat_ws(", ", col("consequent")))
+            .orderBy(desc("lift"))
+            .limit(top_n)
+        )
+
+        df_pandas = df_viz.toPandas()
+
+        if df_pandas.empty:
+            print("ADVERTENCIA: No hay reglas de asociación para graficar")
+            return
+
+        # Crear etiquetas de reglas
+        df_pandas["rule"] = (
+            df_pandas["antecedent_str"] + " → " + df_pandas["consequent_str"]
+        )
+        df_pandas["rule"] = df_pandas["rule"].str[:50]  # Truncar
+
+        plt.figure(figsize=(14, 10))
+
+        # Scatter plot: Confidence vs Lift, tamaño por support
+        scatter = plt.scatter(
+            df_pandas["confidence"],
+            df_pandas["lift"],
+            s=df_pandas["support"] * 10000,
+            alpha=0.6,
+            c=range(len(df_pandas)),
+            cmap="viridis",
+        )
+
+        # Agregar etiquetas
+        for idx, row in df_pandas.iterrows():
+            plt.annotate(
+                f"#{idx+1}", (row["confidence"], row["lift"]), fontsize=8, ha="center"
+            )
+
+        plt.xlabel("Confidence (Confianza)", fontsize=11)
+        plt.ylabel("Lift", fontsize=11)
+        plt.title(
+            f"Top {top_n} Reglas de Asociación\n(Tamaño = Support)",
+            fontsize=13,
+            fontweight="bold",
+        )
+        plt.axhline(
+            y=1, color="r", linestyle="--", alpha=0.5, label="Lift = 1 (independencia)"
+        )
+        plt.legend()
+        plt.grid(True, alpha=0.3, linestyle="--")
+        plt.tight_layout()
+
+        filename = f"{dataset_name}.png"
         filepath = os.path.join(self.output_path, filename)
         plt.savefig(filepath, dpi=300, bbox_inches="tight")
         plt.close()
