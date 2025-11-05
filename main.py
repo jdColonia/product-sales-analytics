@@ -20,20 +20,23 @@ def main():
         pipeline.initialize()
 
         # Ejecutar análisis de categorías
-        print("\n📋 PASO 1/4: Analizando categorías de productos...")
+        print("\n📋 PASO 1/7: Analizando categorías de productos...")
         pipeline.run_categories_analysis()
 
         # Ejecutar análisis de productos-categorías
-        print("\n📦 PASO 2/4: Analizando relación productos-categorías...")
+        print("\n📦 PASO 2/7: Analizando relación productos-categorías...")
         pipeline.run_product_categories_analysis()
 
         # Ejecutar análisis de transacciones
-        print("\n🛒 PASO 3/4: Analizando transacciones...")
+        print("\n🛒 PASO 3/7: Analizando transacciones...")
         pipeline.run_transactions_analysis(sample_size=None)
 
         # Ejecutar análisis de transacciones explodidas
-        print("\n🎯 PASO 4/4: Analizando transacciones detalladas por producto...")
+        print("\n🎯 PASO 4/7: Analizando transacciones detalladas por producto...")
         pipeline.run_transactions_exploded_analysis(sample_size=None)
+
+        # Ejecutar análisis avanzados (temporal, clientes, productos)
+        pipeline.run_advanced_analysis()
 
         # Finalizar
         pipeline.finalize()

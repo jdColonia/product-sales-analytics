@@ -34,10 +34,10 @@ def create_spark_session(app_name="SparkConfig"):
     conf.set("spark.network.timeout", "800s")
     conf.set("spark.sql.execution.pyspark.udf.simplifiedTraceback.enabled", "false")
 
-    # More conservative memory configurations
-    conf.set("spark.driver.memory", "1g")
-    conf.set("spark.executor.memory", "1g")
-    conf.set("spark.driver.maxResultSize", "512m")
+    # Memory configurations optimized for larger datasets
+    conf.set("spark.driver.memory", "4g")
+    conf.set("spark.executor.memory", "4g")
+    conf.set("spark.driver.maxResultSize", "2g")
 
     # Configurations to reduce concurrency problems
     conf.set("spark.sql.adaptive.skewJoin.enabled", "false")
