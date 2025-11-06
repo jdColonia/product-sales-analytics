@@ -170,30 +170,31 @@ class EDAAnalyzer:
 
         if duplicates > 0:
             print(f"ADVERTENCIA: Se encontraron {duplicates:,} registros duplicados")
-            
+
             # Mostrar ejemplos de duplicados
             print(f"\n📋 Ejemplos de registros duplicados:")
             print("-" * 60)
-            
-            from pyspark.sql.functions import count as spark_count
-            
+
             # Encontrar registros que aparecen más de una vez
             if subset:
                 # Duplicados basados en columnas específicas
-                duplicate_examples = df.groupBy(subset).agg(
-                    spark_count("*").alias("veces_repetido")
-                ).filter(col("veces_repetido") > 1).orderBy(desc("veces_repetido"))
+                duplicate_examples = (
+                    df.groupBy(subset)
+                    .agg(count("*").alias("veces_repetido"))
+                    .filter(col("veces_repetido") > 1)
+                    .orderBy(desc("veces_repetido"))
+                )
             else:
                 # Duplicados exactos (todas las columnas)
-                duplicate_examples = df.groupBy(*df.columns).agg(
-                    spark_count("*").alias("veces_repetido")
-                ).filter(col("veces_repetido") > 1).orderBy(desc("veces_repetido"))
-            
+                duplicate_examples = (
+                    df.groupBy(*df.columns)
+                    .agg(count("*").alias("veces_repetido"))
+                    .filter(col("veces_repetido") > 1)
+                    .orderBy(desc("veces_repetido"))
+                )
+
             print(f"\nMostrando primeros 10 casos (ordenados por frecuencia):")
             duplicate_examples.show(10, truncate=False)
-            
-        else:
-            print("No se encontraron duplicados")
 
         result = {
             "dataset_name": dataset_name,
@@ -376,8 +377,31 @@ class EDAAnalyzer:
                 .orderBy(desc("frequency"))
             )
 
-            # Mostrar top N categorías
-            print(f"\n   Top {top_n} categorías más frecuentes:")
+            # Mostrar top N con mensaje contextual
+            if "date" in column.lower():
+                if "exploded" in dataset_name.lower():
+                    header_message = (
+                        f"\n   Top {top_n} fechas con más productos vendidos:"
+                    )
+                elif "transaction" in dataset_name.lower():
+                    header_message = f"\n   Top {top_n} fechas con más transacciones:"
+                else:
+                    header_message = f"\n   Top {top_n} fechas con más registros:"
+            elif column in ["store_id", "tienda", "store"]:
+                header_message = f"\n   Top {top_n} tiendas con más transacciones:"
+            elif column in ["customer_id", "cliente", "customer"]:
+                header_message = f"\n   Top {top_n} clientes con más transacciones:"
+            elif column in ["product_id", "producto", "product"]:
+                if "exploded" in dataset_name.lower():
+                    header_message = f"\n   Top {top_n} productos más vendidos:"
+                else:
+                    header_message = f"\n   Top {top_n} productos con más registros:"
+            elif column in ["category_id", "categoria", "category", "category_name"]:
+                header_message = f"\n   Top {top_n} categorías más frecuentes:"
+            else:
+                header_message = f"\n   Top {top_n} valores más frecuentes:"
+
+            print(header_message)
             top_categories = freq_df.limit(top_n).collect()
 
             frequencies = []
