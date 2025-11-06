@@ -19,10 +19,12 @@ from pyspark.sql.functions import (
     split,
     trim,
     row_number,
+    concat_ws,
 )
 from pyspark.ml.fpm import FPGrowth
 from pyspark.sql.window import Window
 from typing import Dict, Any, List
+import os
 
 
 class ProductAnalyzer:
@@ -182,25 +184,146 @@ class ProductAnalyzer:
         # Preparar canastas
         df_baskets = self.prepare_baskets(df)
 
-        # Aplicar FP-Growth
-        print(f"\n🔄 Ejecutando algoritmo FP-Growth...")
-        fpGrowth = FPGrowth(
-            itemsCol="items", minSupport=min_support, minConfidence=min_confidence
-        )
+        # Definir rutas de archivos
+        output_dir = "output/data"
+        freq_itemsets_path = os.path.join(output_dir, "fp_growth_freq_itemsets")
+        association_rules_path = os.path.join(output_dir, "fp_growth_association_rules")
+        
+        # Crear directorio si no existe
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Verificar si los archivos ya existen (puede ser directorio de Spark o archivo CSV individual)
+        def check_csv_files_exist(path):
+            """Verifica si existen archivos CSV en el directorio o como archivo individual."""
+            # Verificar si es un archivo CSV individual
+            if os.path.exists(path) and os.path.isfile(path) and path.endswith('.csv'):
+                return True
+            # Verificar si es un directorio con archivos CSV
+            if os.path.exists(path) and os.path.isdir(path):
+                files = os.listdir(path)
+                # Spark puede crear archivos .csv o archivos sin extensión que empiezan con 'part-'
+                csv_files = [f for f in files if f.endswith('.csv') or f.startswith('part-')]
+                return len(csv_files) > 0
+            return False
+        
+        # También verificar archivos CSV individuales (método alternativo con pandas)
+        freq_itemsets_csv_path = os.path.join(output_dir, "fp_growth_freq_itemsets.csv")
+        rules_csv_path = os.path.join(output_dir, "fp_growth_association_rules.csv")
+        
+        freq_itemsets_exists = check_csv_files_exist(freq_itemsets_path) or os.path.exists(freq_itemsets_csv_path)
+        association_rules_exists = check_csv_files_exist(association_rules_path) or os.path.exists(rules_csv_path)
+        
+        if freq_itemsets_exists and association_rules_exists:
+            print(f"\n📂 Cargando resultados de FP-Growth desde archivos existentes...")
+            print(f"   Ruta: {output_dir}/")
+            
+            # Determinar qué archivo usar (directorio de Spark o CSV individual)
+            freq_path_to_load = freq_itemsets_csv_path if os.path.exists(freq_itemsets_csv_path) else freq_itemsets_path
+            rules_path_to_load = rules_csv_path if os.path.exists(rules_csv_path) else association_rules_path
+            
+            # Cargar itemsets frecuentes
+            df_freq_itemsets = self.spark.read.csv(
+                freq_path_to_load, 
+                header=True, 
+                inferSchema=True
+            )
+            # Convertir la columna items de string a array
+            df_freq_itemsets = df_freq_itemsets.withColumn(
+                "items", 
+                split(trim(col("items")), ",")
+            )
+            
+            # Cargar reglas de asociación
+            df_rules = self.spark.read.csv(
+                rules_path_to_load,
+                header=True,
+                inferSchema=True
+            )
+            # Convertir las columnas antecedent y consequent de string a array
+            df_rules = df_rules.withColumn(
+                "antecedent",
+                split(trim(col("antecedent")), ",")
+            ).withColumn(
+                "consequent",
+                split(trim(col("consequent")), ",")
+            )
+            
+            total_rules = df_rules.count()
+            print(f"✅ Resultados cargados exitosamente")
+            print(f"📊 Itemsets Frecuentes encontrados: {df_freq_itemsets.count():,}")
+            
+            print(f"\n📋 Top itemsets más frecuentes:")
+            df_freq_itemsets.orderBy(desc("freq")).show(20, truncate=False)
+            
+            print(f"📊 Reglas de Asociación encontradas: {total_rules:,}")
+            
+            # Crear un modelo dummy para mantener compatibilidad
+            model = None
+        else:
+            # Aplicar FP-Growth
+            print(f"\n🔄 Ejecutando algoritmo FP-Growth...")
+            fpGrowth = FPGrowth(
+                itemsCol="items", minSupport=min_support, minConfidence=min_confidence
+            )
 
-        model = fpGrowth.fit(df_baskets)
+            model = fpGrowth.fit(df_baskets)
 
-        # Obtener itemsets frecuentes
-        df_freq_itemsets = model.freqItemsets
-        print(f"\n📊 Itemsets Frecuentes encontrados: {df_freq_itemsets.count():,}")
+            # Obtener itemsets frecuentes
+            df_freq_itemsets = model.freqItemsets
+            print(f"\n📊 Itemsets Frecuentes encontrados: {df_freq_itemsets.count():,}")
 
-        print(f"\n📋 Top itemsets más frecuentes:")
-        df_freq_itemsets.orderBy(desc("freq")).show(20, truncate=False)
+            print(f"\n📋 Top itemsets más frecuentes:")
+            df_freq_itemsets.orderBy(desc("freq")).show(20, truncate=False)
 
-        # Obtener reglas de asociación
-        df_rules = model.associationRules
-        total_rules = df_rules.count()
-        print(f"\n📊 Reglas de Asociación encontradas: {total_rules:,}")
+            # Obtener reglas de asociación
+            df_rules = model.associationRules
+            total_rules = df_rules.count()
+            print(f"\n📊 Reglas de Asociación encontradas: {total_rules:,}")
+            
+            # Guardar resultados en CSV
+            print(f"\n💾 Guardando resultados de FP-Growth en {output_dir}/...")
+            
+            # Convertir arrays a strings para guardar en CSV
+            df_freq_itemsets_to_save = df_freq_itemsets.withColumn(
+                "items",
+                concat_ws(",", col("items"))
+            )
+            
+            df_rules_to_save = df_rules.withColumn(
+                "antecedent",
+                concat_ws(",", col("antecedent"))
+            ).withColumn(
+                "consequent",
+                concat_ws(",", col("consequent"))
+            )
+            
+            # Intentar guardar usando Spark CSV, si falla usar pandas (compatible con Windows)
+            try:
+                # Guardar itemsets frecuentes
+                df_freq_itemsets_to_save.coalesce(1).write.mode("overwrite").option("header", "true").csv(freq_itemsets_path)
+                
+                # Guardar reglas de asociación
+                df_rules_to_save.coalesce(1).write.mode("overwrite").option("header", "true").csv(association_rules_path)
+                
+                print(f"✅ Resultados guardados exitosamente en {output_dir}/")
+            except Exception as e:
+                # Si falla con Spark (problema común en Windows), usar pandas como respaldo
+                print(f"⚠️ Error al guardar con Spark CSV, usando método alternativo (pandas)...")
+                import pandas as pd
+                
+                # Convertir a pandas y guardar directamente
+                freq_itemsets_csv_path = os.path.join(output_dir, "fp_growth_freq_itemsets.csv")
+                rules_csv_path = os.path.join(output_dir, "fp_growth_association_rules.csv")
+                
+                # Guardar itemsets frecuentes
+                pdf_freq = df_freq_itemsets_to_save.toPandas()
+                pdf_freq.to_csv(freq_itemsets_csv_path, index=False, encoding='utf-8')
+                
+                # Guardar reglas de asociación
+                pdf_rules = df_rules_to_save.toPandas()
+                pdf_rules.to_csv(rules_csv_path, index=False, encoding='utf-8')
+                
+                print(f"✅ Resultados guardados exitosamente usando método alternativo en {output_dir}/")
 
         if total_rules > 0:
             # Ordenar por lift (mejor métrica que confidence sola)
